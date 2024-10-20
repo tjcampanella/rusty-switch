@@ -109,7 +109,7 @@ async fn main() {
             .with_state(shared_state);
 
         let listener = tokio::net::TcpListener::bind("0.0.0.0:6969").await.unwrap();
-        println!("Running rusty-swtich on 0.0.0.0:6969");
+        println!("Running rusty-switch on 0.0.0.0:6969");
         axum::serve(listener, app).await.unwrap();
     }
 }
