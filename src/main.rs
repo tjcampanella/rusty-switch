@@ -50,9 +50,12 @@ fn send_checkin_email(_sender_email: String, recepient_emails: Vec<String>) {
 }
 
 async fn heartbeat(State(state): State<Arc<SwitchState>>) -> &'static str {
-    let mut last_opened_time = state.last_opened_time.lock().unwrap();
-    *last_opened_time = Utc::now();
-    "Heartbeat success."
+    if let Ok(mut last_opened_time) = state.last_opened_time.lock() {
+        *last_opened_time = Utc::now();
+        return "Heartbeat success.";
+    }
+
+    "Heartbeat failure."
 }
 
 #[tokio::main]
@@ -108,8 +111,13 @@ async fn main() {
             .route("/heartbeat", get(heartbeat))
             .with_state(shared_state);
 
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:6969").await.unwrap();
-        println!("Running rusty-switch on 0.0.0.0:6969");
-        axum::serve(listener, app).await.unwrap();
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:6969").await;
+        if let Ok(listener) = listener {
+            println!("Running rusty-switch on 0.0.0.0:6969");
+            let _ = axum::serve(listener, app).await;
+        } else {
+            eprintln!("ERROR: Failed to bind on port 6969.");
+            exit(1);
+        }
     }
 }
