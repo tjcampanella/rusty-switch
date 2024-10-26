@@ -28,16 +28,16 @@ fn send_checkin_email(sender: &str, recepient_emails: Vec<String>) -> Result<(),
             .from(
                 format!("Rusty Switch <{sender}>")
                     .parse()
-                    .map_err(|e| (format!("ERROR: From email is invalid: {e} ")))?,
+                    .map_err(|e| format!("ERROR: From email is invalid: {e} "))?,
             )
             .reply_to(
                 format!("Rusty Switch <{sender}>")
                     .parse()
-                    .map_err(|e| (format!("ERROR: Reply to email is invalid: {e}.")))?,
+                    .map_err(|e| format!("ERROR: Reply to email is invalid: {e}."))?,
             )
             .to(format!("<{sender}>")
                 .parse()
-                .map_err(|e| (format!("ERROR: Recipient email is invalid: {e}.")))?)
+                .map_err(|e| format!("ERROR: Recipient email is invalid: {e}."))?)
             .subject("Rusty Switch Check In")
             .header(ContentType::TEXT_HTML)
             .body(String::from(
