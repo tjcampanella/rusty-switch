@@ -21,6 +21,7 @@ command = [
     "--all-targets",
     "--color", "always",
     "--",
+    "-D", "warnings",
     "-D", "clippy::pedantic",
     "-D", "clippy::nursery",
     "-D", "clippy::unwrap_used",

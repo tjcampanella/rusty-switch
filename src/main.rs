@@ -16,37 +16,48 @@ struct SwitchState {
 }
 
 fn print_usage() {
-    // rusty-switch data.txt email1, email2, email3
     println!("Usage: rusty-switch <data.txt> <emails>");
 }
 
-fn send_checkin_email(_sender_email: String, recepient_emails: Vec<String>) {
-    let sender = env::var("RS_SENDER_EMAIL").unwrap();
-    let pw = env::var("RS_SENDER_EMAIL_PASSWORD").unwrap();
+fn send_checkin_email(sender: &str, recepient_emails: Vec<String>) -> Result<(), String> {
+    let pw = env::var("RS_SENDER_EMAIL_PASSWORD")
+        .map_err(|_| "ERROR: RS_SENDER_EMAIL_PASSWORD is not set.")?;
+
     for _ in recepient_emails {
         let email = Message::builder()
-            .from(format!("Rusty Switch <{sender}>").parse().unwrap())
-            .reply_to(format!("Rusty Switch <{sender}>").parse().unwrap())
-            .to(format!("<{sender}>").parse().unwrap())
+            .from(
+                format!("Rusty Switch <{sender}>")
+                    .parse()
+                    .map_err(|e| (format!("ERROR: From email is invalid: {e} ")))?,
+            )
+            .reply_to(
+                format!("Rusty Switch <{sender}>")
+                    .parse()
+                    .map_err(|e| (format!("ERROR: Reply to email is invalid: {e}.")))?,
+            )
+            .to(format!("<{sender}>")
+                .parse()
+                .map_err(|e| (format!("ERROR: Recipient email is invalid: {e}.")))?)
             .subject("Rusty Switch Check In")
             .header(ContentType::TEXT_HTML)
             .body(String::from(
                 "<html><img src='http://localhost:6969/heartbeat'><h1>Checking in.</h1></html>",
             ))
-            .unwrap();
+            .map_err(|e| format!("ERROR: Failed to encode email body: {e}"))?;
 
-        let creds = Credentials::new(sender.clone(), pw.clone());
+        let creds = Credentials::new(sender.to_string(), pw.clone());
 
         let mailer = SmtpTransport::relay("smtp.gmail.com")
-            .unwrap()
+            .map_err(|e| format!("ERROR: Failed to setup SMTP relay: {e}"))?
             .credentials(creds)
             .build();
 
-        match mailer.send(&email) {
-            Ok(_) => println!("Email sent successfully!"),
-            Err(e) => panic!("Could not send email: {e:?}"),
-        }
+        mailer
+            .send(&email)
+            .map_err(|e| format!("ERROR: Failed to send email: {e}"))?;
     }
+
+    Ok(())
 }
 
 async fn heartbeat(State(state): State<Arc<SwitchState>>) -> &'static str {
@@ -90,10 +101,12 @@ async fn main() {
         let mut scheduler = Scheduler::new();
         let sender_email1 = sender_email.clone();
         let recepient_email1 = recepient_email.clone();
-        scheduler
-            .every(1.day())
-            .at("8:00 am")
-            .run(move || send_checkin_email(sender_email1.clone(), vec![recepient_email1.clone()]));
+        scheduler.every(1.day()).at("8:00 am").run(move || {
+            match send_checkin_email(&sender_email1, vec![recepient_email1.clone()]) {
+                Ok(()) => (),
+                Err(msg) => eprintln!("{msg}"),
+            };
+        });
         let _ = scheduler.watch_thread(Duration::from_millis(100));
 
         let shared_state = Arc::new(SwitchState {
