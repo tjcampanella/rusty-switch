@@ -1,3 +1,4 @@
+use lettre::message::Mailbox;
 use rand::{distributions::Alphanumeric, Rng};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -24,27 +25,17 @@ fn print_usage() {
 }
 
 fn send_checkin_email(
-    sender: &str,
-    recepient_emails: Vec<String>,
+    sender: &Mailbox,
+    recepient_emails: &Vec<Mailbox>,
     secret_token: &str,
 ) -> Result<(), String> {
     let pw = env::var("RS_SENDER_EMAIL_PASSWORD")
         .map_err(|_| "ERROR: RS_SENDER_EMAIL_PASSWORD is not set.")?;
     for email in recepient_emails {
         let email = Message::builder()
-            .from(
-                format!("Rusty Switch <{sender}>")
-                    .parse()
-                    .map_err(|e| format!("ERROR: From email is invalid: {e} "))?,
-            )
-            .reply_to(
-                format!("Rusty Switch <{sender}>")
-                    .parse()
-                    .map_err(|e| format!("ERROR: Reply to email is invalid: {e}."))?,
-            )
-            .to(format!("<{email}>")
-                .parse()
-                .map_err(|e| format!("ERROR: Recipient email is invalid: {e}."))?)
+            .from(sender.clone())
+            .reply_to(sender.clone())
+            .to(email.clone())
             .subject("Rusty Switch Check In")
             .header(ContentType::TEXT_HTML)
             .body(format!(
@@ -68,27 +59,17 @@ fn send_checkin_email(
 }
 
 fn activate_dead_man_switch(
-    sender: &str,
-    recepient_emails: Vec<String>,
+    sender: &Mailbox,
+    recipient_emails: &Vec<Mailbox>,
     data: &str,
 ) -> Result<(), String> {
     let pw = env::var("RS_SENDER_EMAIL_PASSWORD")
         .map_err(|_| "ERROR: RS_SENDER_EMAIL_PASSWORD is not set.")?;
-    for email in recepient_emails {
+    for rec in recipient_emails {
         let email = Message::builder()
-            .from(
-                format!("Rusty Switch <{sender}>")
-                    .parse()
-                    .map_err(|e| format!("ERROR: From email is invalid: {e} "))?,
-            )
-            .reply_to(
-                format!("Rusty Switch <{sender}>")
-                    .parse()
-                    .map_err(|e| format!("ERROR: Reply to email is invalid: {e}."))?,
-            )
-            .to(format!("<{email}>")
-                .parse()
-                .map_err(|e| format!("ERROR: Recipient email is invalid: {e}."))?)
+            .from(sender.clone())
+            .reply_to(sender.clone())
+            .to(rec.clone())
             .subject("Rusty Switch ACTIVATED")
             .header(ContentType::TEXT_HTML)
             .body(format!("<html><p>{data}</p></html>",))
@@ -136,99 +117,120 @@ async fn main() {
     }
 
     let data_filename = args[1].to_string();
-    let sender_email = args[2].to_string();
-    let recepient_email = args[3].to_string();
+    let sender_email_raw = args[2].to_string();
+    let sender_email: Result<Mailbox, String> = sender_email_raw
+        .parse()
+        .map_err(|_| format!("ERROR: Sender email is invalid: {sender_email_raw}"));
 
-    let data = fs::read_to_string(data_filename);
-
-    if data.is_err() {
-        eprintln!("ERROR: Invalid data.txt.");
-        print_usage();
+    if let Err(msg) = sender_email {
+        eprintln!("{msg}");
         exit(1);
     }
 
-    if let Ok(data) = data {
-        if data.is_empty() {
-            eprintln!("ERROR: data file cannot be empty.");
+    if let Ok(sender_email) = sender_email {
+        let recipient_emails: Vec<Result<Mailbox, String>> = args[3..]
+            .iter()
+            .map(|email| {
+                email
+                    .parse()
+                    .map_err(|_| format!("ERROR: Recipient email is invalid: {email}"))
+            })
+            .collect();
+
+        for rec in &recipient_emails {
+            if let Err(msg) = rec {
+                eprintln!("{msg}");
+                exit(1);
+            }
+        }
+
+        let recipient_emails: Vec<Mailbox> = recipient_emails
+            .iter()
+            .filter_map(|rec| rec.clone().ok())
+            .collect();
+
+        let data = fs::read_to_string(data_filename);
+
+        if data.is_err() {
+            eprintln!("ERROR: Invalid data.txt.");
             print_usage();
             exit(1);
         }
 
-        let mut scheduler = Scheduler::new();
-        let sender_email1 = sender_email.clone();
-        let recepient_email1 = recepient_email.clone();
-
-        let secret_token: String = rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(16)
-            .map(char::from)
-            .collect();
-
-        let secret_token1: String = secret_token.clone();
-
-        println!("Starting scheduler in background thread.");
-        scheduler.every(1.day()).at("9:14 pm").run(move || {
-            println!("Sending check in email.");
-            match send_checkin_email(
-                &sender_email1,
-                vec![recepient_email1.clone()],
-                &secret_token1,
-            ) {
-                Ok(()) => (),
-                Err(msg) => eprintln!("{msg}"),
-            };
-        });
-
-        let _handle = scheduler.watch_thread(Duration::from_millis(1000));
-
-        let shared_state = Arc::new(SwitchState {
-            last_opened_time: Mutex::new(Utc::now()),
-            secret_token,
-        });
-
-        let shared_state1 = shared_state.clone();
-
-        let mut scheduler = Scheduler::new();
-        let threshold_raw: String =
-            env::var("RS_ACTIVATION_THRESHOLD").unwrap_or_else(|_| String::from("7"));
-        let mut threshold: i64 = 7;
-        if let Ok(parsed) = threshold_raw.parse() {
-            threshold = parsed;
-        }
-
-        scheduler.every(1.hour()).run(move || {
-            let last_opened_at = &shared_state1.last_opened_time.lock();
-            let curr_timestamp = Utc::now();
-            if let Ok(last_opened_at) = last_opened_at {
-                let diff = curr_timestamp - **last_opened_at;
-
-                if diff.num_days() >= threshold {
-                    println!("Dead mans switch activated!");
-
-                    match activate_dead_man_switch(
-                        &sender_email,
-                        vec![recepient_email.clone()],
-                        &data,
-                    ) {
-                        Ok(()) => (),
-                        Err(msg) => eprintln!("{msg}"),
-                    };
-                }
+        if let Ok(data) = data {
+            if data.is_empty() {
+                eprintln!("ERROR: data file cannot be empty.");
+                print_usage();
+                exit(1);
             }
-        });
-        let _handle2 = scheduler.watch_thread(Duration::from_millis(100));
 
-        let app = Router::new()
-            .route("/heartbeat", get(heartbeat))
-            .with_state(shared_state);
+            let mut scheduler = Scheduler::new();
+            let sender_email1 = sender_email.clone();
 
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:6969").await;
-        if let Ok(listener) = listener {
-            println!("Running rusty-switch on 0.0.0.0:6969");
-            let _ = axum::serve(listener, app).await;
-        } else {
-            eprintln!("ERROR: Failed to bind on port 6969.");
-            exit(1);
+            let secret_token: String = rand::thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(16)
+                .map(char::from)
+                .collect();
+
+            let secret_token1: String = secret_token.clone();
+            let recipient_emails1 = recipient_emails.clone();
+
+            println!("Starting scheduler in background thread.");
+            scheduler.every(1.day()).at("8:00 am").run(move || {
+                println!("Sending check in email.");
+                match send_checkin_email(&sender_email1, &recipient_emails1, &secret_token1) {
+                    Ok(()) => (),
+                    Err(msg) => eprintln!("{msg}"),
+                };
+            });
+
+            let _handle = scheduler.watch_thread(Duration::from_millis(1000));
+
+            let shared_state = Arc::new(SwitchState {
+                last_opened_time: Mutex::new(Utc::now()),
+                secret_token,
+            });
+
+            let shared_state1 = shared_state.clone();
+
+            let mut scheduler = Scheduler::new();
+            let threshold_raw: String =
+                env::var("RS_ACTIVATION_THRESHOLD").unwrap_or_else(|_| String::from("7"));
+            let mut threshold: i64 = 7;
+            if let Ok(parsed) = threshold_raw.parse() {
+                threshold = parsed;
+            }
+
+            scheduler.every(1.hour()).run(move || {
+                let last_opened_at = &shared_state1.last_opened_time.lock();
+                let curr_timestamp = Utc::now();
+                if let Ok(last_opened_at) = last_opened_at {
+                    let diff = curr_timestamp - **last_opened_at;
+
+                    if diff.num_days() >= threshold {
+                        println!("Dead mans switch activated!");
+                        match activate_dead_man_switch(&sender_email, &recipient_emails, &data) {
+                            Ok(()) => (),
+                            Err(msg) => eprintln!("{msg}"),
+                        };
+                    }
+                }
+            });
+            let _handle2 = scheduler.watch_thread(Duration::from_millis(100));
+
+            let app = Router::new()
+                .route("/heartbeat", get(heartbeat))
+                .with_state(shared_state);
+
+            let listener = tokio::net::TcpListener::bind("0.0.0.0:6969").await;
+            if let Ok(listener) = listener {
+                println!("Running rusty-switch on 0.0.0.0:6969");
+                let _ = axum::serve(listener, app).await;
+            } else {
+                eprintln!("ERROR: Failed to bind on port 6969.");
+                exit(1);
+            }
         }
     }
 }
