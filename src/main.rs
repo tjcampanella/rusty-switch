@@ -202,9 +202,10 @@ async fn main() {
 
                     if diff.num_days() >= threshold {
                         println!("Dead mans switch activated!");
-                        match activate_dead_man_switch(&sender_email, &recipient_emails, &data) {
-                            Ok(()) => (),
-                            Err(msg) => eprintln!("{msg}"),
+                        if let Err(msg) =
+                            activate_dead_man_switch(&sender_email, &recipient_emails, &data)
+                        {
+                            eprintln!("{msg}");
                         };
                     }
                 }
@@ -226,3 +227,8 @@ async fn main() {
         }
     }
 }
+
+
+
+
+
