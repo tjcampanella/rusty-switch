@@ -1,6 +1,9 @@
+use rand::{distributions::Alphanumeric, Rng};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::{env, fs, process::exit, time::Duration};
 
+use axum::extract::Query;
 use axum::extract::State;
 use axum::{routing::get, Router};
 use chrono::{DateTime, Utc};
@@ -13,13 +16,18 @@ use lettre::{
 
 struct SwitchState {
     last_opened_time: Mutex<DateTime<Utc>>,
+    secret_token: String,
 }
 
 fn print_usage() {
     println!("Usage: rusty-switch <data.txt> <emails>");
 }
 
-fn send_checkin_email(sender: &str, recepient_emails: Vec<String>) -> Result<(), String> {
+fn send_checkin_email(
+    sender: &str,
+    recepient_emails: Vec<String>,
+    secret_token: &str,
+) -> Result<(), String> {
     let pw = env::var("RS_SENDER_EMAIL_PASSWORD")
         .map_err(|_| "ERROR: RS_SENDER_EMAIL_PASSWORD is not set.")?;
     for email in recepient_emails {
@@ -39,8 +47,8 @@ fn send_checkin_email(sender: &str, recepient_emails: Vec<String>) -> Result<(),
                 .map_err(|e| format!("ERROR: Recipient email is invalid: {e}."))?)
             .subject("Rusty Switch Check In")
             .header(ContentType::TEXT_HTML)
-            .body(String::from(
-                "<html><img src='http://localhost:6969/heartbeat'><h1>Checking in.</h1></html>",
+            .body(format!(
+                "<html><img src='http://localhost:6969/heartbeat?token={secret_token}'><h1>Checking in.</h1></html>",
             ))
             .map_err(|e| format!("ERROR: Failed to encode email body: {e}"))?;
 
@@ -59,11 +67,16 @@ fn send_checkin_email(sender: &str, recepient_emails: Vec<String>) -> Result<(),
     Ok(())
 }
 
-async fn heartbeat(State(state): State<Arc<SwitchState>>) -> &'static str {
+async fn heartbeat(
+    State(state): State<Arc<SwitchState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> &'static str {
     if let Ok(mut last_opened_time) = state.last_opened_time.lock() {
-        *last_opened_time = Utc::now();
-        println!("Heartbeat success.");
-        return "Heartbeat success.";
+        if params["token"] == state.secret_token {
+            *last_opened_time = Utc::now();
+            println!("Heartbeat success.");
+            return "Heartbeat success.";
+        }
     }
 
     println!("Heartbeat failure.");
@@ -102,18 +115,32 @@ async fn main() {
         let mut scheduler = Scheduler::new();
         let recepient_email1 = recepient_email.clone();
 
+        let secret_token: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect();
+
+        let secret_token1: String = secret_token.clone();
+
         println!("Starting scheduler in background thread.");
-        scheduler.every(1.day()).at("8:00 am").run(move || {
+        scheduler.every(1.day()).at("9:14 pm").run(move || {
             println!("Sending check in email.");
-            match send_checkin_email(&sender_email, vec![recepient_email1.clone()]) {
+            match send_checkin_email(
+                &sender_email,
+                vec![recepient_email1.clone()],
+                &secret_token1,
+            ) {
                 Ok(()) => (),
                 Err(msg) => eprintln!("{msg}"),
             };
         });
+
         let _handle = scheduler.watch_thread(Duration::from_millis(1000));
 
         let shared_state = Arc::new(SwitchState {
             last_opened_time: Mutex::new(Utc::now()),
+            secret_token,
         });
 
         let mut scheduler = Scheduler::new();
