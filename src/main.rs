@@ -24,18 +24,13 @@ fn print_usage() {
     println!("Usage: rusty-switch <data.txt> <emails>");
 }
 
-fn send_checkin_email(
-    sender: &Mailbox,
-    recepient_emails: &Vec<Mailbox>,
-    secret_token: &str,
-) -> Result<(), String> {
+fn send_checkin_email(sender: &Mailbox, secret_token: &str) -> Result<(), String> {
     let pw = env::var("RS_SENDER_EMAIL_PASSWORD")
         .map_err(|_| "ERROR: RS_SENDER_EMAIL_PASSWORD is not set.")?;
-    for email in recepient_emails {
-        let email = Message::builder()
+    let email = Message::builder()
             .from(sender.clone())
             .reply_to(sender.clone())
-            .to(email.clone())
+            .to(sender.clone())
             .subject("Rusty Switch Check In")
             .header(ContentType::TEXT_HTML)
             .body(format!(
@@ -43,17 +38,16 @@ fn send_checkin_email(
             ))
             .map_err(|e| format!("ERROR: Failed to encode email body: {e}"))?;
 
-        let creds = Credentials::new(sender.to_string(), pw.clone());
+    let creds = Credentials::new(sender.to_string(), pw);
 
-        let mailer = SmtpTransport::relay("smtp.gmail.com")
-            .map_err(|e| format!("ERROR: Failed to setup SMTP relay: {e}"))?
-            .credentials(creds)
-            .build();
+    let mailer = SmtpTransport::relay("smtp.gmail.com")
+        .map_err(|e| format!("ERROR: Failed to setup SMTP relay: {e}"))?
+        .credentials(creds)
+        .build();
 
-        mailer
-            .send(&email)
-            .map_err(|e| format!("ERROR: Failed to send email: {e}"))?;
-    }
+    mailer
+        .send(&email)
+        .map_err(|e| format!("ERROR: Failed to send email: {e}"))?;
 
     Ok(())
 }
@@ -150,7 +144,6 @@ async fn main() {
             .collect();
 
         let data = fs::read_to_string(data_filename);
-
         if data.is_err() {
             eprintln!("ERROR: Invalid data.txt.");
             print_usage();
@@ -174,12 +167,11 @@ async fn main() {
                 .collect();
 
             let secret_token1: String = secret_token.clone();
-            let recipient_emails1 = recipient_emails.clone();
 
             println!("Starting scheduler in background thread.");
             scheduler.every(1.day()).at("8:00 am").run(move || {
                 println!("Sending check in email.");
-                match send_checkin_email(&sender_email1, &recipient_emails1, &secret_token1) {
+                match send_checkin_email(&sender_email1, &secret_token1) {
                     Ok(()) => (),
                     Err(msg) => eprintln!("{msg}"),
                 };
