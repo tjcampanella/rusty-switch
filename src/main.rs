@@ -112,7 +112,7 @@ async fn main() {
 
     let data_filename = args[1].to_string();
     let sender_email_raw = args[2].to_string();
-    let sender_email: Result<Mailbox, String> = sender_email_raw
+    let sender_email: Result<Mailbox, String> = format!("Rusty Switch <{sender_email_raw}>")
         .parse()
         .map_err(|_| format!("ERROR: Sender email is invalid: {sender_email_raw}"));
 
