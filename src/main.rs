@@ -67,6 +67,48 @@ fn send_checkin_email(
     Ok(())
 }
 
+fn activate_dead_man_switch(
+    sender: &str,
+    recepient_emails: Vec<String>,
+    data: &str,
+) -> Result<(), String> {
+    let pw = env::var("RS_SENDER_EMAIL_PASSWORD")
+        .map_err(|_| "ERROR: RS_SENDER_EMAIL_PASSWORD is not set.")?;
+    for email in recepient_emails {
+        let email = Message::builder()
+            .from(
+                format!("Rusty Switch <{sender}>")
+                    .parse()
+                    .map_err(|e| format!("ERROR: From email is invalid: {e} "))?,
+            )
+            .reply_to(
+                format!("Rusty Switch <{sender}>")
+                    .parse()
+                    .map_err(|e| format!("ERROR: Reply to email is invalid: {e}."))?,
+            )
+            .to(format!("<{email}>")
+                .parse()
+                .map_err(|e| format!("ERROR: Recipient email is invalid: {e}."))?)
+            .subject("Rusty Switch ACTIVATED")
+            .header(ContentType::TEXT_HTML)
+            .body(format!("<html><p>{data}</p></html>",))
+            .map_err(|e| format!("ERROR: Failed to encode email body: {e}"))?;
+
+        let creds = Credentials::new(sender.to_string(), pw.clone());
+
+        let mailer = SmtpTransport::relay("smtp.gmail.com")
+            .map_err(|e| format!("ERROR: Failed to setup SMTP relay: {e}"))?
+            .credentials(creds)
+            .build();
+
+        mailer
+            .send(&email)
+            .map_err(|e| format!("ERROR: Failed to send email: {e}"))?;
+    }
+
+    Ok(())
+}
+
 async fn heartbeat(
     State(state): State<Arc<SwitchState>>,
     Query(params): Query<HashMap<String, String>>,
@@ -113,6 +155,7 @@ async fn main() {
         }
 
         let mut scheduler = Scheduler::new();
+        let sender_email1 = sender_email.clone();
         let recepient_email1 = recepient_email.clone();
 
         let secret_token: String = rand::thread_rng()
@@ -127,7 +170,7 @@ async fn main() {
         scheduler.every(1.day()).at("9:14 pm").run(move || {
             println!("Sending check in email.");
             match send_checkin_email(
-                &sender_email,
+                &sender_email1,
                 vec![recepient_email1.clone()],
                 &secret_token1,
             ) {
@@ -143,12 +186,37 @@ async fn main() {
             secret_token,
         });
 
+        let shared_state1 = shared_state.clone();
+
         let mut scheduler = Scheduler::new();
-        scheduler
-            .every(7.day())
-            .at("8:00 am")
-            .run(|| println!("check if should send secret data now"));
-        let _ = scheduler.watch_thread(Duration::from_millis(100));
+        let threshold_raw: String =
+            env::var("RS_ACTIVATION_THRESHOLD").unwrap_or_else(|_| String::from("7"));
+        let mut threshold: i64 = 7;
+        if let Ok(parsed) = threshold_raw.parse() {
+            threshold = parsed;
+        }
+
+        scheduler.every(1.hour()).run(move || {
+            let last_opened_at = &shared_state1.last_opened_time.lock();
+            let curr_timestamp = Utc::now();
+            if let Ok(last_opened_at) = last_opened_at {
+                let diff = curr_timestamp - **last_opened_at;
+
+                if diff.num_days() >= threshold {
+                    println!("Dead mans switch activated!");
+
+                    match activate_dead_man_switch(
+                        &sender_email,
+                        vec![recepient_email.clone()],
+                        &data,
+                    ) {
+                        Ok(()) => (),
+                        Err(msg) => eprintln!("{msg}"),
+                    };
+                }
+            }
+        });
+        let _handle2 = scheduler.watch_thread(Duration::from_millis(100));
 
         let app = Router::new()
             .route("/heartbeat", get(heartbeat))
