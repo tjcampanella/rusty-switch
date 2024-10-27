@@ -22,8 +22,7 @@ fn print_usage() {
 fn send_checkin_email(sender: &str, recepient_emails: Vec<String>) -> Result<(), String> {
     let pw = env::var("RS_SENDER_EMAIL_PASSWORD")
         .map_err(|_| "ERROR: RS_SENDER_EMAIL_PASSWORD is not set.")?;
-
-    for _ in recepient_emails {
+    for email in recepient_emails {
         let email = Message::builder()
             .from(
                 format!("Rusty Switch <{sender}>")
@@ -35,7 +34,7 @@ fn send_checkin_email(sender: &str, recepient_emails: Vec<String>) -> Result<(),
                     .parse()
                     .map_err(|e| format!("ERROR: Reply to email is invalid: {e}."))?,
             )
-            .to(format!("<{sender}>")
+            .to(format!("<{email}>")
                 .parse()
                 .map_err(|e| format!("ERROR: Recipient email is invalid: {e}."))?)
             .subject("Rusty Switch Check In")
@@ -63,9 +62,11 @@ fn send_checkin_email(sender: &str, recepient_emails: Vec<String>) -> Result<(),
 async fn heartbeat(State(state): State<Arc<SwitchState>>) -> &'static str {
     if let Ok(mut last_opened_time) = state.last_opened_time.lock() {
         *last_opened_time = Utc::now();
+        println!("Heartbeat success.");
         return "Heartbeat success.";
     }
 
+    println!("Heartbeat failure.");
     "Heartbeat failure."
 }
 
@@ -99,15 +100,17 @@ async fn main() {
         }
 
         let mut scheduler = Scheduler::new();
-        let sender_email1 = sender_email.clone();
         let recepient_email1 = recepient_email.clone();
+
+        println!("Starting scheduler in background thread.");
         scheduler.every(1.day()).at("8:00 am").run(move || {
-            match send_checkin_email(&sender_email1, vec![recepient_email1.clone()]) {
+            println!("Sending check in email.");
+            match send_checkin_email(&sender_email, vec![recepient_email1.clone()]) {
                 Ok(()) => (),
                 Err(msg) => eprintln!("{msg}"),
             };
         });
-        let _ = scheduler.watch_thread(Duration::from_millis(100));
+        let _handle = scheduler.watch_thread(Duration::from_millis(1000));
 
         let shared_state = Arc::new(SwitchState {
             last_opened_time: Mutex::new(Utc::now()),
