@@ -111,6 +111,14 @@ async fn main() {
     }
 
     let data_filename = args[1].to_string();
+
+    let data = fs::read_to_string(data_filename);
+    if data.is_err() {
+        eprintln!("ERROR: Invalid data.txt.");
+        print_usage();
+        exit(1);
+    }
+
     let sender_email_raw = args[2].to_string();
     let sender_email: Result<Mailbox, String> = format!("Rusty Switch <{sender_email_raw}>")
         .parse()
@@ -142,13 +150,6 @@ async fn main() {
             .iter()
             .filter_map(|rec| rec.clone().ok())
             .collect();
-
-        let data = fs::read_to_string(data_filename);
-        if data.is_err() {
-            eprintln!("ERROR: Invalid data.txt.");
-            print_usage();
-            exit(1);
-        }
 
         if let Ok(data) = data {
             if data.is_empty() {
@@ -227,8 +228,3 @@ async fn main() {
         }
     }
 }
-
-
-
-
-
