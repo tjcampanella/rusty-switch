@@ -15,17 +15,31 @@ need_stdout = false
 command = ["cargo", "check", "--all-targets", "--color", "always"]
 need_stdout = false
 
+[jobs.clippy-all]
+command = [
+    "cargo", "clippy",
+    "--all-targets",
+    "--color", "always",
+    "--",
+    "-W", "warnings",
+    "-W", "clippy::pedantic",
+    "-W", "clippy::nursery",
+    "-W", "clippy::unwrap_used",
+    "-W", "clippy::expect_used",
+]
+need_stdout = false
+
 [jobs.clippy]
 command = [
     "cargo", "clippy",
     "--all-targets",
     "--color", "always",
     "--",
-    "-D", "warnings",
-    "-D", "clippy::pedantic",
-    "-D", "clippy::nursery",
-    "-D", "clippy::unwrap_used",
-    "-D", "clippy::expect_used",
+    "-W", "warnings",
+    "-W", "clippy::pedantic",
+    "-W", "clippy::nursery",
+    "-W", "clippy::unwrap_used",
+    "-W", "clippy::expect_used",
 ]
 need_stdout = false
 
